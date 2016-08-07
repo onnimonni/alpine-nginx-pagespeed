@@ -1,5 +1,5 @@
-FROM quay.io/wunder/wunder-alpine-base
-MAINTAINER ilari.makela@wunderkraut.com
+FROM alpine:3.3
+MAINTAINER onni.hakala@geniem.com
 
 ENV NGINX_VERSION=1.9.15 \
     PAGESPEED_VERSION=1.11.33.1 \
