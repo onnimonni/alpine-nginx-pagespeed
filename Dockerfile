@@ -1,4 +1,4 @@
-FROM alpine:3.3
+FROM alpine:3.4
 MAINTAINER onni.hakala@geniem.com
 
 ENV NGINX_VERSION=1.9.15 \
