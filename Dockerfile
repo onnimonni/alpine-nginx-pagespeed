@@ -8,6 +8,8 @@ ENV NGINX_VERSION=1.9.15 \
     LIBPNG_VERSION=1.2.56
 
 RUN set -x && \
+
+    # Install runtime dependencies
     apk --no-cache --update add \
         ca-certificates \
         libuuid \
@@ -19,6 +21,8 @@ RUN set -x && \
         openssl \
         pcre \
         zlib && \
+
+    # Install temporary build dependencies
     apk --no-cache --update add -t .build-deps \
         apache2-dev \
         apr-dev \
@@ -33,16 +37,37 @@ RUN set -x && \
         python \
         wget \
         zlib-dev && \
+
+    # Create build directory
     mkdir ${SOURCE_DIR} && \
     cd ${SOURCE_DIR} && \
-    wget -O- https://dl.google.com/dl/linux/mod-pagespeed/tar/beta/mod-pagespeed-beta-${PAGESPEED_VERSION}-r0.tar.bz2 | tar -jxv && \
-    wget -O- http://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz | tar -zxv && \
-    wget -O- ftp://ftp.simplesystems.org/pub/libpng/png/src/${LIBPNG_LIB}/libpng-${LIBPNG_VERSION}.tar.gz | tar -zxv && \
-    wget -O- https://github.com/pagespeed/ngx_pagespeed/archive/v${PAGESPEED_VERSION}-beta.tar.gz | tar -zxv && \
+
+    ##
+    # Download all needed custom packages
+    ##
+    # Nginx
+    wget -O- https://dl.google.com/dl/linux/mod-pagespeed/tar/beta/mod-pagespeed-beta-${PAGESPEED_VERSION}-r0.tar.bz2 | tar -jx && \
+
+    # Pagespeed
+    wget -O- http://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz | tar -zx && \
+
+    # Psol for pagespeed
+    wget -O- ftp://ftp.simplesystems.org/pub/libpng/png/src/${LIBPNG_LIB}/libpng-${LIBPNG_VERSION}.tar.gz | tar -zx && \
+
+    # Libpng for psol
+    wget -O- https://github.com/pagespeed/ngx_pagespeed/archive/v${PAGESPEED_VERSION}-beta.tar.gz | tar -zx && \
+
+    # Use all cores available in the builds with -j${NPROC} flag
+    readonly NPROC=$(grep -c ^processor /proc/cpuinfo 2>/dev/null || 1) && \
+    echo "using up to $NPROC threads" && \
+
+    # Build libpng
     cd ${SOURCE_DIR}/libpng-${LIBPNG_VERSION} && \
     ./configure --build=$CBUILD --host=$CHOST --prefix=/usr --enable-shared --with-libpng-compat && \
-    make && \
-    make install && \
+    make -j${NPROC} && \
+    make install -j${NPROC} && \
+
+    # Download and use patches for pagespeed to compile in alpine
     cd ${SOURCE_DIR} && \
     wget https://raw.githubusercontent.com/iler/alpine-nginx-pagespeed/master/patches/automatic_makefile.patch && \
     wget https://raw.githubusercontent.com/iler/alpine-nginx-pagespeed/master/patches/libpng_cflags.patch && \
@@ -55,11 +80,17 @@ RUN set -x && \
     patch -p1 -i ${SOURCE_DIR}/pthread_nonrecursive_np.patch && \
     patch -p1 -i ${SOURCE_DIR}/rename_c_symbols.patch && \
     patch -p1 -i ${SOURCE_DIR}/stack_trace_posix.patch && \
+
+    # Build pagespeed module
     ./generate.sh -D use_system_libs=1 -D _GLIBCXX_USE_CXX11_ABI=0 -D use_system_icu=1 && \
     cd ${SOURCE_DIR}/modpagespeed-${PAGESPEED_VERSION}/src && \
-    make BUILDTYPE=Release CXXFLAGS=" -I/usr/include/apr-1 -I${SOURCE_DIR}/libpng-${LIBPNG_VERSION} -fPIC -D_GLIBCXX_USE_CXX11_ABI=0" CFLAGS=" -I/usr/include/apr-1 -I${SOURCE_DIR}/libpng-${LIBPNG_VERSION} -fPIC -D_GLIBCXX_USE_CXX11_ABI=0" && \
+    make BUILDTYPE=Release CXXFLAGS=" -I/usr/include/apr-1 -I${SOURCE_DIR}/libpng-${LIBPNG_VERSION} -fPIC -D_GLIBCXX_USE_CXX11_ABI=0" CFLAGS=" -I/usr/include/apr-1 -I${SOURCE_DIR}/libpng-${LIBPNG_VERSION} -fPIC -D_GLIBCXX_USE_CXX11_ABI=0" -j${NPROC} && \
+
+    # Build psol
     cd ${SOURCE_DIR}/modpagespeed-${PAGESPEED_VERSION}/src/pagespeed/automatic/ && \
-    make psol BUILDTYPE=Release CXXFLAGS=" -I/usr/include/apr-1 -I${SOURCE_DIR}/libpng-${LIBPNG_VERSION} -fPIC -D_GLIBCXX_USE_CXX11_ABI=0" CFLAGS=" -I/usr/include/apr-1 -I${SOURCE_DIR}/libpng-${LIBPNG_VERSION} -fPIC -D_GLIBCXX_USE_CXX11_ABI=0" && \
+    make psol BUILDTYPE=Release CXXFLAGS=" -I/usr/include/apr-1 -I${SOURCE_DIR}/libpng-${LIBPNG_VERSION} -fPIC -D_GLIBCXX_USE_CXX11_ABI=0" CFLAGS=" -I/usr/include/apr-1 -I${SOURCE_DIR}/libpng-${LIBPNG_VERSION} -fPIC -D_GLIBCXX_USE_CXX11_ABI=0" -j${NPROC} && \
+
+    # Copy psol and pagespeed modules to nginx build folder
     mkdir -p ${SOURCE_DIR}/ngx_pagespeed-${PAGESPEED_VERSION}-beta/psol && \
     mkdir -p ${SOURCE_DIR}/ngx_pagespeed-${PAGESPEED_VERSION}-beta/psol/lib/Release/linux/x64 && \
     mkdir -p ${SOURCE_DIR}/ngx_pagespeed-${PAGESPEED_VERSION}-beta/psol/include/out/Release && \
@@ -70,6 +101,8 @@ RUN set -x && \
     cp -r ${SOURCE_DIR}/modpagespeed-${PAGESPEED_VERSION}/src/third_party ${SOURCE_DIR}/ngx_pagespeed-${PAGESPEED_VERSION}-beta/psol/include/ && \
     cp -r ${SOURCE_DIR}/modpagespeed-${PAGESPEED_VERSION}/src/tools ${SOURCE_DIR}/ngx_pagespeed-${PAGESPEED_VERSION}-beta/psol/include/ && \
     cp -r ${SOURCE_DIR}/modpagespeed-${PAGESPEED_VERSION}/src/pagespeed/automatic/pagespeed_automatic.a ${SOURCE_DIR}/ngx_pagespeed-${PAGESPEED_VERSION}-beta/psol/lib/Release/linux/x64 && \
+
+    # Build nginx
     cd ${SOURCE_DIR}/nginx-${NGINX_VERSION} && \
     LD_LIBRARY_PATH=${SOURCE_DIR}/modpagespeed-${PAGESPEED_VERSION}/usr/lib ./configure --with-ipv6 \
         --prefix=/var/lib/nginx \
@@ -101,11 +134,15 @@ RUN set -x && \
         --add-module=${SOURCE_DIR}/ngx_pagespeed-${PAGESPEED_VERSION}-beta \
         --with-cc-opt="-fPIC -I /usr/include/apr-1" \
         --with-ld-opt="-luuid -lapr-1 -laprutil-1 -licudata -licuuc -L${SOURCE_DIR}/modpagespeed-${PAGESPEED_VERSION}/usr/lib -lpng12 -lturbojpeg -ljpeg" && \
-    make && \
-    make install && \
+    make -j${NPROC} && \
+    make install -j${NPROC} && \
+
+    # Cleanup
     apk del .build-deps && \
     rm -rf /tmp/* && \
     rm -rf /var/cache/apk/* && \
+
+    # Symlink log files to system output
     ln -sf /dev/stdout /var/log/nginx/access.log && \
     ln -sf /dev/stderr /var/log/nginx/error.log
 
